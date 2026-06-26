@@ -140,27 +140,28 @@ def login(data: CustomerLogin):
     else:
         raise HTTPException(status_code=401, detail="Invalid phone number or password!")
 
-# UPDATED: Ab yeh search route medicine name aur category dono ko smart tarike se filter karega 🔥
 @app.get("/customer/search-medicine/")
-def search_medicine(query: Optional[str] = "", category: Optional[str] = None):
+def search_medicine(query: str = "", category: str = ""):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-    
-    # 1. Agar specific category chip select hai (aur 'All' nahi hai)
-    if category and category != "All":
-        cursor.execute(
-            "SELECT name, price, category FROM medicines WHERE name LIKE ? AND category = ?", 
-            (f"%{query}%", category)
-        )
-    # 2. Agar 'All' category select hai ya fir direct text search ho raha hai
-    else:
-        cursor.execute(
-            "SELECT name, price, category FROM medicines WHERE name LIKE ?", 
-            (f"%{query}%",)
-        )
-        
-    rows = cursor.fetchall()
-    conn.close()
+    try:
+        # Agar query hai toh 'para%' yaani shuruat ki spelling match karega
+        if query and category:
+            cursor.execute("SELECT name, price, category FROM medicines WHERE name LIKE ? AND category = ?", (f"{query}%", category))
+        elif query:
+            cursor.execute("SELECT name, price, category FROM medicines WHERE name LIKE ?", (f"{query}%",))
+        elif category:
+            cursor.execute("SELECT name, price, category FROM medicines WHERE category = ?", (category,))
+        else:
+            cursor.execute("SELECT name, price, category FROM medicines")
+            
+        rows = cursor.fetchall()
+        results = [{"name": r[0], "price": r[1], "category": r[2]} for r in rows]
+        return {"status": "Success", "results": results}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
     
     results = [{"name": row[0], "price": row[1], "category": row[2]} for row in rows]
     return {"results": results}
