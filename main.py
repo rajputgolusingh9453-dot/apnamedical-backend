@@ -110,6 +110,11 @@ class AddressCreate(BaseModel):
     state: str
     pincode: str
 
+class MedicineCreate(BaseModel):
+    name: str
+    price: float
+    category: str
+
 @app.post("/customer/signup/")
 def signup(data: CustomerSignup):
     conn = sqlite3.connect(DB_NAME)
@@ -219,6 +224,22 @@ def get_addresses(phone: str):
         cursor.execute("SELECT id, receiver_name, receiver_phone, house_no, area_details, landmark, city, state, pincode FROM addresses WHERE customer_phone = ?", (phone,))
         addresses = [dict(row) for row in cursor.fetchall()]
         return {"status": "Success", "addresses": addresses}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
+
+@app.post("/admin/add-medicine/")
+def add_medicine(data: MedicineCreate):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            "INSERT INTO medicines (name, price, category) VALUES (?, ?, ?)", 
+            (data.name, data.price, data.category)
+        )
+        conn.commit()
+        return {"status": "Success", "message": f"{data.name} successfully added!"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     finally:
