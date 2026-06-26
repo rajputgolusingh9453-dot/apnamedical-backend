@@ -110,53 +110,61 @@ class AddressCreate(BaseModel):
     state: str
     pincode: str
 
+# 1. Pydantic Model mein image_url jodhna
 class MedicineCreate(BaseModel):
     name: str
     price: float
     category: str
+    image_url: Optional[str] = "https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=200" # Default image agar blank chhodein toh
 
-@app.post("/customer/signup/")
-def signup(data: CustomerSignup):
+# 2. Database Table Creation Query mein update
+# (Jahan table create ho rahi hai wahan 'image_url TEXT' add kar dein)
+cursor.execute("""
+    CREATE TABLE IF NOT EXISTS medicines (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT UNIQUE,
+        price REAL,
+        category TEXT,
+        image_url TEXT
+    )
+""")
+
+# 3. Add Medicine Endpoint ko update karna
+@app.post("/admin/add-medicine/")
+def add_medicine(med: MedicineCreate):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     try:
-        cursor.execute("INSERT INTO customers (phone, name, password) VALUES (?, ?, ?)", (data.phone, data.name, data.password))
+        cursor.execute(
+            "INSERT INTO medicines (name, price, category, image_url) VALUES (?, ?, ?, ?)",
+            (med.name, med.price, med.category, med.image_url)
+        )
         conn.commit()
-        return {"status": "Success", "message": "Account created successfully!"}
+        return {"status": "Success", "message": f"{med.name} added successfully with image!"}
     except sqlite3.IntegrityError:
-        raise HTTPException(status_code=400, detail="Phone number already registered!")
+        raise HTTPException(status_code=400, detail="Medicine already exists!")
     finally:
         conn.close()
 
-@app.post("/customer/login/")
-def login(data: CustomerLogin):
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM customers WHERE phone = ? AND password = ?", (data.phone, data.password))
-    user = cursor.fetchone()
-    conn.close()
-    if user:
-        return {"status": "Success", "message": "Login successful!"}
-    else:
-        raise HTTPException(status_code=401, detail="Invalid phone number or password!")
-
+# 4. Search Medicine Route mein 'image_url' fetch karna
 @app.get("/customer/search-medicine/")
 def search_medicine(query: str = "", category: str = ""):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     try:
-        # Agar query hai toh 'para%' yaani shuruat ki spelling match karega
+        # Query mein image_url fetch lagana
         if query and category:
-            cursor.execute("SELECT name, price, category FROM medicines WHERE name LIKE ? AND category = ?", (f"{query}%", category))
+            cursor.execute("SELECT name, price, category, image_url FROM medicines WHERE name LIKE ? AND category = ?", (f"{query}%", category))
         elif query:
-            cursor.execute("SELECT name, price, category FROM medicines WHERE name LIKE ?", (f"{query}%",))
+            cursor.execute("SELECT name, price, category, image_url FROM medicines WHERE name LIKE ?", (f"{query}%",))
         elif category:
-            cursor.execute("SELECT name, price, category FROM medicines WHERE category = ?", (category,))
+            cursor.execute("SELECT name, price, category, image_url FROM medicines WHERE category = ?", (category,))
         else:
-            cursor.execute("SELECT name, price, category FROM medicines")
+            cursor.execute("SELECT name, price, category, image_url FROM medicines")
             
         rows = cursor.fetchall()
-        results = [{"name": r[0], "price": r[1], "category": r[2]} for r in rows]
+        # Front-end ko image_url pass karna
+        results = [{"name": r[0], "price": r[1], "category": r[2], "image_url": r[3]} for r in rows]
         return {"status": "Success", "results": results}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -252,3 +260,58 @@ if __name__ == "__main__":
     import os
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run("main:app", host="0.0.0.0", port=port)
+    # =======================================================
+# BLINKIT STYLE REAL IMAGE UPLOAD ENGINE 📸
+# =======================================================
+from fastapi import UploadFile, File, Form
+from fastapi.staticfiles import StaticFiles
+import shutil
+import os
+import time
+
+# 1. Images save karne ke liye backend par ek folder banana
+UPLOAD_DIR = "static_images"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+# 2. FastAPI ko batana ki static images folder browser par open ho sake
+# (Ise aap top par ya yahan bhi rakh sakte hain, koi dikkat nahi hai)
+app.mount("/static_images", StaticFiles(directory="static_images"), name="static_images")
+
+# 3. Real Image upload karne wala naya Endpoint
+@app.post("/admin/add-medicine-with-image/")
+async def add_medicine_with_image(
+    name: str = Form(...),
+    price: float = Form(...),
+    category: str = Form(...),
+    image: UploadFile = File(...) # Laptop/Mobile se real photo accept karega
+):
+    import sqlite3
+    conn = sqlite3.connect("medical.db") # Jo aapka DB_NAME variable hai vahan
+    cursor = conn.cursor()
+    try:
+        # File name ko safe banana aur backend par save karna
+        file_location = f"{UPLOAD_DIR}/{int(time.time())}_{image.filename}"
+        with open(file_location, "wb") as buffer:
+            shutil.copyfileobj(image.file, buffer)
+        
+        # Render cloud par is save hui image ka live public link banana
+        live_image_url = f"https://apnamedical-backend.onrender.com/{file_location}"
+        
+        # Database mein entry daalna (Purani table mein save karega)
+        cursor.execute(
+            "INSERT INTO medicines (name, price, category, image_url) VALUES (?, ?, ?, ?)",
+            (name, price, category, live_image_url)
+        )
+        conn.commit()
+        return {
+            "status": "Success", 
+            "message": f"{name} real image ke sath add ho gayi!", 
+            "url": live_image_url
+        }
+        
+    except sqlite3.IntegrityError:
+        return {"status": "Error", "detail": "Medicine already exists!"}
+    except Exception as e:
+        return {"status": "Error", "detail": str(e)}
+    finally:
+        conn.close()
