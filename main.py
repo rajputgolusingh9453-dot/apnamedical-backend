@@ -290,47 +290,43 @@ def get_addresses(phone: str):
         })
     return {"status": "Success", "addresses": results}
 
+# 🛠️ Backend par check karne ke liye standard Python Function structure:
 @app.post("/customer/place-order/")
-def place_order(data: OrderPlace):
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
+def place_order(data: dict):
+    import sqlite3
+    from datetime import datetime # 🔥 Time handle karne ke liye
+    
     try:
-        cursor.execute("INSERT INTO orders (customer_phone, total_price) VALUES (?, ?)", (data.customer_phone, data.total_price))
-        order_id = cursor.lastrowid
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
         
-        for item in data.items:
-            cursor.execute("""
-            INSERT INTO order_items (order_id, medicine_name, quantity, price)
-            VALUES (?, ?, ?, ?)
-            """, (order_id, item.name, item.quantity, item.price))
+        customer_phone = data.get("customer_phone")
+        total_price = data.get("total_price")
+        items = data.get("items", [])
+        
+        # Current Date-Time text banana
+        current_time = datetime.now().strftime("%Y-%m-%d %H:%M")
+        
+        # 1. Orders table mein entry insert karna (including created_at)
+        cursor.execute(
+            "INSERT INTO orders (customer_phone, total_price, status, created_at) VALUES (?, ?, ?, ?)",
+            (customer_phone, total_price, 'Pending', current_time)
+        )
+        order_id = cursor.lastrowid # Generate hui fresh Order ID nikalna
+        
+        # 2. Items loop chala kar order_items table mein save karna
+        for item in items:
+            cursor.execute(
+                "INSERT INTO order_items (order_id, name, price, quantity) VALUES (?, ?, ?, ?)",
+                (order_id, item.get("name"), item.get("price"), item.get("quantity"))
+            )
             
         conn.commit()
-        return {"status": "Success", "message": "Order Placed Successfully!", "order_id": order_id}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
         conn.close()
-
-@app.get("/customer/my-orders/")
-def my_orders(phone: str):
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute("SELECT id, total_price, status, created_at FROM orders WHERE customer_phone = ? ORDER BY id DESC", (phone,))
-    order_rows = cursor.fetchall()
-    
-    orders = []
-    for o in order_rows:
-        order_id = o[0]
-        cursor.execute("SELECT medicine_name, quantity, price FROM order_items WHERE order_id = ?", (order_id,))
-        item_rows = cursor.fetchall()
-        items = [{"name": i[0], "quantity": i[1], "price": i[2]} for i in item_rows]
+        return {"status": "success", "order_id": order_id}
         
-        orders.append({
-            "order_id": order_id,
-            "total_price": o[1],
-            "status": o[2],
-            "created_at": o[3],
-            "items": items
-        })
-    conn.close()
-    return {"status": "Success", "orders": orders}
+    except Exception as e:
+        if 'conn' in locals():
+            conn.close()
+        # Agar crash hoga toh yahan se error trace milega
+        raise HTTPException(status_code=500, detail=str(e))
