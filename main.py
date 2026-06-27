@@ -31,10 +31,37 @@ except RuntimeException:
     pass
 
 def init_db():
+    import sqlite3
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     
-    # 1. Medicines table agar nahi bani toh banana
+    # 📑 1. CUSTOMERS TABLE (Jo missing thi aur crash kar rahi thi)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS customers (
+            phone TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            password TEXT NOT NULL
+        )
+    ''')
+    
+    # 📑 2. ADDRESSES TABLE (Delivery addresses save karne ke liye)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS addresses (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            customer_phone TEXT NOT NULL,
+            receiver_name TEXT NOT NULL,
+            receiver_phone TEXT NOT NULL,
+            house_no TEXT NOT NULL,
+            area_details TEXT,
+            landmark TEXT,
+            city TEXT,
+            state TEXT,
+            pincode TEXT NOT NULL,
+            FOREIGN KEY(customer_phone) REFERENCES customers(phone)
+        )
+    ''')
+    
+    # 📑 3. MEDICINES TABLE (Aapki default products table)
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS medicines (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -45,10 +72,9 @@ def init_db():
         )
     ''')
     
-    # 2. Check karna ki table khali hai ya nahi
+    # 📑 4. Check karna aur sample medicines automatic load karna
     cursor.execute("SELECT COUNT(*) FROM medicines")
     if cursor.fetchone()[0] == 0:
-        # Table khali hone par automatic ye saari medicines insert ho jayengi
         sample_medicines = [
             ("Paracetamol 650mg", "Pain Relief", 30.0, "https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=400"),
             ("Amoxicillin 500mg", "Antibiotics", 120.0, "https://images.unsplash.com/photo-1628771065518-0d82f11181a6?w=400"),
@@ -66,10 +92,9 @@ def init_db():
             sample_medicines
         )
         conn.commit()
-        print("🎉 Default medicines database me automatic add ho gayi hain!")
+        print("🎉 Saari default tables aur medicines automatic add ho gayi hain!")
         
     conn.close()
-
 # Initialize Database on Startup
 init_db()
 
