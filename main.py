@@ -18,7 +18,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-DB_NAME = "apna_medical_v2.db"
+DB_NAME = "apna_medical.db"
 UPLOAD_DIR = "static_images"
 
 # Ensure image upload folder exists
@@ -34,61 +34,40 @@ def init_db():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS customers (
-        phone TEXT PRIMARY KEY,
-        name TEXT,
-        password TEXT
-    )
-    """)
+    # 1. Medicines table agar nahi bani toh banana
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS medicines (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            category TEXT NOT NULL,
+            price REAL NOT NULL,
+            image_url TEXT
+        )
+    ''')
     
-    # FIXED & UPDATED: Added image_url column inside medicines table definitions safely
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS medicines (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT UNIQUE,
-        price REAL,
-        category TEXT DEFAULT 'All',
-        image_url TEXT
-    )
-    """)
-    
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS orders (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        customer_phone TEXT,
-        total_price REAL,
-        status TEXT DEFAULT 'Pending',
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )
-    """)
-    
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS order_items (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        order_id INTEGER,
-        medicine_name TEXT,
-        quantity INTEGER,
-        price REAL
-    )
-    """)
-
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS addresses (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        customer_phone TEXT,
-        receiver_name TEXT,
-        receiver_phone TEXT,
-        house_no TEXT,
-        area_details TEXT,
-        landmark TEXT,
-        city TEXT,
-        state TEXT,
-        pincode TEXT
-    )
-    """)
-    
-    conn.commit()
+    # 2. Check karna ki table khali hai ya nahi
+    cursor.execute("SELECT COUNT(*) FROM medicines")
+    if cursor.fetchone()[0] == 0:
+        # Table khali hone par automatic ye saari medicines insert ho jayengi
+        sample_medicines = [
+            ("Paracetamol 650mg", "Pain Relief", 30.0, "https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=400"),
+            ("Amoxicillin 500mg", "Antibiotics", 120.0, "https://images.unsplash.com/photo-1628771065518-0d82f11181a6?w=400"),
+            ("Neurobion Forte", "Vitamins", 35.0, "https://images.unsplash.com/photo-1616679911721-fe6eec13fcd5?w=400"),
+            ("Himalaya Baby Powder", "Baby Care", 95.0, "https://images.unsplash.com/photo-1515488042361-404e9250afef?w=400"),
+            ("Combiflam Tablet", "Pain Relief", 45.0, "https://images.unsplash.com/photo-1550572017-edd951b55104?w=400"),
+            ("Betadine Ointment", "First Aid", 65.0, "https://images.unsplash.com/photo-1607619275116-0d1800a82b4b?w=400"),
+            ("Dettol Liquid 100ml", "First Aid", 52.0, "https://images.unsplash.com/photo-1583947215259-38e31be8751f?w=400"),
+            ("Limcee Vitamin C", "Vitamins", 25.0, "https://images.unsplash.com/photo-1576071804486-b8bc22106dbf?w=400"),
+            ("Nivea Body Milk", "Personal Care", 199.0, "https://images.unsplash.com/photo-1556229010-aa3f7ff66b24?w=400")
+        ]
+        
+        cursor.executemany(
+            "INSERT INTO medicines (name, category, price, image_url) VALUES (?, ?, ?, ?)",
+            sample_medicines
+        )
+        conn.commit()
+        print("🎉 Default medicines database me automatic add ho gayi hain!")
+        
     conn.close()
 
 # Initialize Database on Startup
