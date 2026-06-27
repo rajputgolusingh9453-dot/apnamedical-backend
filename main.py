@@ -7,6 +7,7 @@ from typing import List, Optional
 import shutil
 import os
 import time
+from datetime import datetime # 🔥 Real-time timestamps capture karne ke liye jodha hai
 
 app = FastAPI()
 
@@ -27,7 +28,7 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 # Static files mount config for serving product images
 try:
     app.mount("/static_images", StaticFiles(directory=UPLOAD_DIR), name="static_images")
-except RuntimeException:
+except Exception:
     pass
 
 def init_db():
@@ -72,7 +73,7 @@ def init_db():
         )
     ''')
 
-    # 📑 4. ORDERS TABLE (Jo missing thi aur order place karte waqt ghumne ka kaaran hai)
+    # 📑 4. ORDERS TABLE 
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS orders (
             order_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -84,7 +85,7 @@ def init_db():
         )
     ''')
 
-    # 📑 5. ORDER ITEMS TABLE (Orders ke andar ki dawaiyon ki list save karne ke liye)
+    # 📑 5. ORDER ITEMS TABLE (Fixed Schema to align with exact keys)
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS order_items (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -119,6 +120,9 @@ def init_db():
         print("🎉 Saari default tables aur medicines automatic add ho gayi hain!")
         
     conn.close()
+
+# System startup activation lock
+init_db()
 
 # =======================================================
 # PYDANTIC MODELS DEFINITION
@@ -162,7 +166,6 @@ class MedicineCreate(BaseModel):
 # =======================================================
 # AUTHENTICATION & CORE API ROUTES
 # =======================================================
-
 @app.post("/customer/signup/")
 def signup(data: CustomerSignup):
     conn = sqlite3.connect(DB_NAME)
@@ -197,7 +200,6 @@ def search_medicine(query: str = "", category: str = ""):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     try:
-        # LIKE 'query%' lagaya hai taaki starting spelling filter ho sake ekdum blinkit ki tarah
         if query and category:
             cursor.execute("SELECT name, price, category, image_url FROM medicines WHERE name LIKE ? AND category = ?", (f"{query}%", category))
         elif query:
@@ -228,12 +230,10 @@ async def add_medicine_with_image(
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     try:
-        # File name ke sath file save karna
         file_location = f"{UPLOAD_DIR}/{int(time.time())}_{image.filename}"
         with open(file_location, "wb") as buffer:
             shutil.copyfileobj(image.file, buffer)
         
-        # Public URL structure for render cloud hosting
         live_image_url = f"https://apnamedical-backend.onrender.com/{file_location}"
         
         cursor.execute(
@@ -246,7 +246,6 @@ async def add_medicine_with_image(
             "message": f"{name} real image ke sath add ho gayi!", 
             "url": live_image_url
         }
-        
     except sqlite3.IntegrityError:
         return {"status": "Error", "detail": "Medicine already exists!"}
     except Exception as e:
@@ -290,43 +289,59 @@ def get_addresses(phone: str):
         })
     return {"status": "Success", "addresses": results}
 
-# 🛠️ Backend par check karne ke liye standard Python Function structure:
+# ✅ FIXED: NOW ENFORCES REAL TIMESTAMPS AND MAPS PROPER TABLE KEYS
 @app.post("/customer/place-order/")
-def place_order(data: dict):
-    import sqlite3
-    from datetime import datetime # 🔥 Time handle karne ke liye
-    
+def place_order(data: OrderPlace):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
     try:
-        conn = sqlite3.connect(DB_NAME)
-        cursor = conn.cursor()
+        # Automated time tag generation string format configuration matching system setup
+        order_time = datetime.now().strftime("%Y-%m-%d %H:%M")
         
-        customer_phone = data.get("customer_phone")
-        total_price = data.get("total_price")
-        items = data.get("items", [])
-        
-        # Current Date-Time text banana
-        current_time = datetime.now().strftime("%Y-%m-%d %H:%M")
-        
-        # 1. Orders table mein entry insert karna (including created_at)
         cursor.execute(
-            "INSERT INTO orders (customer_phone, total_price, status, created_at) VALUES (?, ?, ?, ?)",
-            (customer_phone, total_price, 'Pending', current_time)
+            "INSERT INTO orders (customer_phone, total_price, status, created_at) VALUES (?, ?, ?, ?)", 
+            (data.customer_phone, data.total_price, 'Pending', order_time)
         )
-        order_id = cursor.lastrowid # Generate hui fresh Order ID nikalna
+        order_id = cursor.lastrowid
         
-        # 2. Items loop chala kar order_items table mein save karna
-        for item in items:
-            cursor.execute(
-                "INSERT INTO order_items (order_id, name, price, quantity) VALUES (?, ?, ?, ?)",
-                (order_id, item.get("name"), item.get("price"), item.get("quantity"))
-            )
+        for item in data.items:
+            cursor.execute("""
+                INSERT INTO order_items (order_id, name, price, quantity)
+                VALUES (?, ?, ?, ?)
+            """, (order_id, item.name, item.price, item.quantity))
             
         conn.commit()
-        conn.close()
-        return {"status": "success", "order_id": order_id}
-        
+        return {"status": "Success", "message": "Order Placed Successfully!", "order_id": order_id}
     except Exception as e:
-        if 'conn' in locals():
-            conn.close()
-        # Agar crash hoga toh yahan se error trace milega
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
+
+# ✅ FIXED: ALIGNED QUERY MAP BACKEND INTEGRITY SEAMLESSLY
+@app.get("/customer/my-orders/")
+def my_orders(phone: str):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT order_id, total_price, status, created_at FROM orders WHERE customer_phone = ? ORDER BY order_id DESC", (phone,))
+        order_rows = cursor.fetchall()
+        
+        orders = []
+        for o in order_rows:
+            current_id = o[0]
+            cursor.execute("SELECT name, quantity, price FROM order_items WHERE order_id = ?", (current_id,))
+            item_rows = cursor.fetchall()
+            items = [{"name": i[0], "quantity": i[1], "price": i[2]} for i in item_rows]
+            
+            orders.append({
+                "order_id": current_id,
+                "total_price": o[1],
+                "status": o[2],
+                "created_at": o[3],
+                "items": items
+            })
+        return {"status": "Success", "orders": orders}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
