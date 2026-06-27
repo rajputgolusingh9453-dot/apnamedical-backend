@@ -18,7 +18,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-DB_NAME = "apna_medical.db"
+DB_NAME = "apna_medical_v3.db"
 UPLOAD_DIR = "static_images"
 
 # Ensure image upload folder exists
