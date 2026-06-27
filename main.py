@@ -21,8 +21,14 @@ app.add_middleware(
 DB_NAME = "apna_medical.db"
 UPLOAD_DIR = "static_images"
 
-# Ensure local storage folder exists for images
+# Ensure image upload folder exists
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+# Static files mount config for serving product images
+try:
+    app.mount("/static_images", StaticFiles(directory=UPLOAD_DIR), name="static_images")
+except RuntimeException:
+    pass
 
 def init_db():
     conn = sqlite3.connect(DB_NAME)
@@ -36,7 +42,7 @@ def init_db():
     )
     """)
     
-    # UPDATED: medicines table mein 'image_url' aur 'UNIQUE' constraints pehle se set hain 🔥
+    # FIXED & UPDATED: Added image_url column inside medicines table definitions safely
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS medicines (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -85,14 +91,8 @@ def init_db():
     conn.commit()
     conn.close()
 
-# Database initialization call
+# Initialize Database on Startup
 init_db()
-
-# Static files configuration for hosting images publicly
-try:
-    app.mount("/static_images", StaticFiles(directory=UPLOAD_DIR), name="static_images")
-except RuntimeException:
-    pass
 
 # =======================================================
 # PYDANTIC MODELS DEFINITION
@@ -134,9 +134,64 @@ class MedicineCreate(BaseModel):
     image_url: Optional[str] = "https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=200"
 
 # =======================================================
-# API ROUTES & BLINKIT IMAGE UPLOAD ENGINE
+# AUTHENTICATION & CORE API ROUTES
 # =======================================================
 
+@app.post("/customer/signup/")
+def signup(data: CustomerSignup):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    try:
+        cursor.execute("INSERT INTO customers (phone, name, password) VALUES (?, ?, ?)", (data.phone, data.name, data.password))
+        conn.commit()
+        return {"status": "Success", "message": "Signup Successful!"}
+    except sqlite3.IntegrityError:
+        raise HTTPException(status_code=400, detail="Phone number already registered!")
+    finally:
+        conn.close()
+
+@app.post("/customer/login/")
+def login(data: CustomerLogin):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("SELECT name, password FROM customers WHERE phone = ?", (data.phone,))
+    row = cursor.fetchone()
+    conn.close()
+    
+    if row and row[1] == data.password:
+        return {"status": "Success", "message": "Login Successful!", "customer_name": row[0]}
+    else:
+        raise HTTPException(status_code=401, detail="Invalid phone or password!")
+
+# =======================================================
+# BLINKIT INSTANT SPELLING SEARCH LOGIC 🔍
+# =======================================================
+@app.get("/customer/search-medicine/")
+def search_medicine(query: str = "", category: str = ""):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    try:
+        # LIKE 'query%' lagaya hai taaki starting spelling filter ho sake ekdum blinkit ki tarah
+        if query and category:
+            cursor.execute("SELECT name, price, category, image_url FROM medicines WHERE name LIKE ? AND category = ?", (f"{query}%", category))
+        elif query:
+            cursor.execute("SELECT name, price, category, image_url FROM medicines WHERE name LIKE ?", (f"{query}%",))
+        elif category:
+            cursor.execute("SELECT name, price, category, image_url FROM medicines WHERE category = ?", (category,))
+        else:
+            cursor.execute("SELECT name, price, category, image_url FROM medicines")
+            
+        rows = cursor.fetchall()
+        results = [{"name": r[0], "price": r[1], "category": r[2], "image_url": r[3]} for r in rows]
+        return {"status": "Success", "results": results}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
+
+# =======================================================
+# BLINKIT STYLE REAL IMAGE UPLOAD ROUTE 📸
+# =======================================================
 @app.post("/admin/add-medicine-with-image/")
 async def add_medicine_with_image(
     name: str = Form(...),
@@ -147,15 +202,14 @@ async def add_medicine_with_image(
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     try:
-        # File ko local folder mein safe name ke sath save karna
+        # File name ke sath file save karna
         file_location = f"{UPLOAD_DIR}/{int(time.time())}_{image.filename}"
         with open(file_location, "wb") as buffer:
             shutil.copyfileobj(image.file, buffer)
         
-        # Public live URL template
+        # Public URL structure for render cloud hosting
         live_image_url = f"https://apnamedical-backend.onrender.com/{file_location}"
         
-        # Database query chalana
         cursor.execute(
             "INSERT INTO medicines (name, price, category, image_url) VALUES (?, ?, ?, ?)",
             (name, price, category, live_image_url)
@@ -174,4 +228,83 @@ async def add_medicine_with_image(
     finally:
         conn.close()
 
-# Note: Aapke baki endpoints (Login, Signup, Search) jo pehle bane the, unhe iske neeche add kar sakte hain.
+# =======================================================
+# ORDERS & ADDRESSES ENDPOINTS
+# =======================================================
+@app.post("/customer/add-address/")
+def add_address(data: AddressCreate):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+        INSERT INTO addresses (customer_phone, receiver_name, receiver_phone, house_no, area_details, landmark, city, state, pincode)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (data.customer_phone, data.receiver_name, data.receiver_phone, data.house_no, data.area_details, data.landmark, data.city, data.state, data.pincode))
+        conn.commit()
+        return {"status": "Success", "message": "Address Saved Successfully!"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
+
+@app.get("/customer/get-addresses/")
+def get_addresses(phone: str):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, receiver_name, receiver_phone, house_no, area_details, landmark, city, state, pincode FROM addresses WHERE customer_phone = ?", (phone,))
+    rows = cursor.fetchall()
+    conn.close()
+    
+    results = []
+    for r in rows:
+        results.append({
+            "id": r[0], "receiver_name": r[1], "receiver_phone": r[2],
+            "house_no": r[3], "area_details": r[4], "landmark": r[5],
+            "city": r[6], "state": r[7], "pincode": r[8]
+        })
+    return {"status": "Success", "addresses": results}
+
+@app.post("/customer/place-order/")
+def place_order(data: OrderPlace):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    try:
+        cursor.execute("INSERT INTO orders (customer_phone, total_price) VALUES (?, ?)", (data.customer_phone, data.total_price))
+        order_id = cursor.lastrowid
+        
+        for item in data.items:
+            cursor.execute("""
+            INSERT INTO order_items (order_id, medicine_name, quantity, price)
+            VALUES (?, ?, ?, ?)
+            """, (order_id, item.name, item.quantity, item.price))
+            
+        conn.commit()
+        return {"status": "Success", "message": "Order Placed Successfully!", "order_id": order_id}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
+
+@app.get("/customer/my-orders/")
+def my_orders(phone: str):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, total_price, status, created_at FROM orders WHERE customer_phone = ? ORDER BY id DESC", (phone,))
+    order_rows = cursor.fetchall()
+    
+    orders = []
+    for o in order_rows:
+        order_id = o[0]
+        cursor.execute("SELECT medicine_name, quantity, price FROM order_items WHERE order_id = ?", (order_id,))
+        item_rows = cursor.fetchall()
+        items = [{"name": i[0], "quantity": i[1], "price": i[2]} for i in item_rows]
+        
+        orders.append({
+            "order_id": order_id,
+            "total_price": o[1],
+            "status": o[2],
+            "created_at": o[3],
+            "items": items
+        })
+    conn.close()
+    return {"status": "Success", "orders": orders}
