@@ -128,7 +128,6 @@ cursor.execute("""
         image_url TEXT
     )
 """)
-
 # =======================================================
 # BLINKIT STYLE REAL IMAGE UPLOAD ENGINE 📸 (FULLY FIXED)
 # =======================================================
