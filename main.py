@@ -1,8 +1,12 @@
 import sqlite3
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from typing import List, Optional # Optional ko add kiya query params handle karne ke liye
+from typing import List, Optional
+import shutil
+import os
+import time
 
 app = FastAPI()
 
@@ -15,6 +19,10 @@ app.add_middleware(
 )
 
 DB_NAME = "apna_medical.db"
+UPLOAD_DIR = "static_images"
+
+# Ensure local storage folder exists for images
+os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 def init_db():
     conn = sqlite3.connect(DB_NAME)
@@ -28,13 +36,14 @@ def init_db():
     )
     """)
     
-    # UPDATED: medicines table mein category column jod diya hai 🔥
+    # UPDATED: medicines table mein 'image_url' aur 'UNIQUE' constraints pehle se set hain 🔥
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS medicines (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT,
+        name TEXT UNIQUE,
         price REAL,
-        category TEXT DEFAULT 'All'
+        category TEXT DEFAULT 'All',
+        image_url TEXT
     )
     """)
     
@@ -58,7 +67,6 @@ def init_db():
     )
     """)
 
-    # Addresses Table: Name, Phone, aur Pincode specifications ke sath
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS addresses (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -77,9 +85,18 @@ def init_db():
     conn.commit()
     conn.close()
 
-# Database structures ko initialize karne ke liye function call
+# Database initialization call
 init_db()
 
+# Static files configuration for hosting images publicly
+try:
+    app.mount("/static_images", StaticFiles(directory=UPLOAD_DIR), name="static_images")
+except RuntimeException:
+    pass
+
+# =======================================================
+# PYDANTIC MODELS DEFINITION
+# =======================================================
 class CustomerSignup(BaseModel):
     name: str
     phone: str
@@ -110,43 +127,15 @@ class AddressCreate(BaseModel):
     state: str
     pincode: str
 
-# 1. Pydantic Model mein image_url jodhna
 class MedicineCreate(BaseModel):
     name: str
     price: float
     category: str
-    image_url: Optional[str] = "https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=200" # Default image agar blank chhodein toh
+    image_url: Optional[str] = "https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=200"
 
-# 2. Database Table Creation Query mein update
-# (Jahan table create ho rahi hai wahan 'image_url TEXT' add kar dein)
-cursor.execute("""
-    CREATE TABLE IF NOT EXISTS medicines (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT UNIQUE,
-        price REAL,
-        category TEXT,
-        image_url TEXT
-    )
-""")
 # =======================================================
-# BLINKIT STYLE REAL IMAGE UPLOAD ENGINE 📸 (FULLY FIXED)
+# API ROUTES & BLINKIT IMAGE UPLOAD ENGINE
 # =======================================================
-from fastapi import UploadFile, File, Form
-from fastapi.staticfiles import StaticFiles
-import shutil
-import os
-import time
-import sqlite3
-
-UPLOAD_DIR = "static_images"
-os.makedirs(UPLOAD_DIR, exist_ok=True)
-
-# Static files mount agar upar nahi hua hai toh yahan ensure karein
-try:
-    app.mount("/static_images", StaticFiles(directory=UPLOAD_DIR), name="static_images")
-except RuntimeException:
-    # Agar pehle se mounted hoga toh error nahi aayega
-    pass
 
 @app.post("/admin/add-medicine-with-image/")
 async def add_medicine_with_image(
@@ -155,18 +144,15 @@ async def add_medicine_with_image(
     category: str = Form(...),
     image: UploadFile = File(...)
 ):
-    # 🔥 Agar upar DB_NAME variable hai toh use lega, nahi toh medical.db chalega
-    db_file = DB_NAME if 'DB_NAME' in globals() else "medical.db"
-    
-    conn = sqlite3.connect(db_file)
+    conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     try:
-        # File ko local folder mein save karna
+        # File ko local folder mein safe name ke sath save karna
         file_location = f"{UPLOAD_DIR}/{int(time.time())}_{image.filename}"
         with open(file_location, "wb") as buffer:
             shutil.copyfileobj(image.file, buffer)
         
-        # Public URL create karna
+        # Public live URL template
         live_image_url = f"https://apnamedical-backend.onrender.com/{file_location}"
         
         # Database query chalana
@@ -187,3 +173,5 @@ async def add_medicine_with_image(
         return {"status": "Error", "detail": str(e)}
     finally:
         conn.close()
+
+# Note: Aapke baki endpoints (Login, Signup, Search) jo pehle bane the, unhe iske neeche add kar sakte hain.
