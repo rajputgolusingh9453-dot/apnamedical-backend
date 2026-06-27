@@ -35,7 +35,7 @@ def init_db():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     
-    # 📑 1. CUSTOMERS TABLE (Jo missing thi aur crash kar rahi thi)
+    # 📑 1. CUSTOMERS TABLE
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS customers (
             phone TEXT PRIMARY KEY,
@@ -44,7 +44,7 @@ def init_db():
         )
     ''')
     
-    # 📑 2. ADDRESSES TABLE (Delivery addresses save karne ke liye)
+    # 📑 2. ADDRESSES TABLE
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS addresses (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -61,7 +61,7 @@ def init_db():
         )
     ''')
     
-    # 📑 3. MEDICINES TABLE (Aapki default products table)
+    # 📑 3. MEDICINES TABLE
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS medicines (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -71,8 +71,32 @@ def init_db():
             image_url TEXT
         )
     ''')
+
+    # 📑 4. ORDERS TABLE (Jo missing thi aur order place karte waqt ghumne ka kaaran hai)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS orders (
+            order_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            customer_phone TEXT NOT NULL,
+            total_price REAL NOT NULL,
+            status TEXT NOT NULL DEFAULT 'Pending',
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(customer_phone) REFERENCES customers(phone)
+        )
+    ''')
+
+    # 📑 5. ORDER ITEMS TABLE (Orders ke andar ki dawaiyon ki list save karne ke liye)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS order_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            order_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            price REAL NOT NULL,
+            quantity INTEGER NOT NULL,
+            FOREIGN KEY(order_id) REFERENCES orders(order_id)
+        )
+    ''')
     
-    # 📑 4. Check karna aur sample medicines automatic load karna
+    # 📑 6. Check karna aur sample medicines automatic load karna
     cursor.execute("SELECT COUNT(*) FROM medicines")
     if cursor.fetchone()[0] == 0:
         sample_medicines = [
@@ -95,8 +119,6 @@ def init_db():
         print("🎉 Saari default tables aur medicines automatic add ho gayi hain!")
         
     conn.close()
-# Initialize Database on Startup
-init_db()
 
 # =======================================================
 # PYDANTIC MODELS DEFINITION
